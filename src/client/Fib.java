@@ -4,7 +4,7 @@ import compute.Task;
 import java.io.Serializable;
 
 
-public class Fib implements Task<BigInteger>, Serializable {
+public class Fib implements Task<Long>, Serializable {
 
     private static final long serialVersionUID = 227L;
 
@@ -23,14 +23,14 @@ public class Fib implements Task<BigInteger>, Serializable {
     /**
      * Calculate pi.
      */
-    public BigInteger execute() {
+    public Long execute() {
         return computeFib(n);
     }
 
     /**
      * Compute the value of the n-th Fibonacci.
      */
-    public static BigInteger computeFib(int n) {
+    public static long computeFib(int n) {
     	if (n <= 1) return n;
         else return computeFib(n-1) + computeFib(n-2);
         
