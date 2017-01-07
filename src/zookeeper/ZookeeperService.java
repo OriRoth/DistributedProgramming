@@ -1,12 +1,13 @@
 package zookeeper;
 
-
 import java.io.IOException;
-import java.util.ArrayList;
+import java.io.PrintWriter;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.zookeeper.CreateMode;
 import org.apache.zookeeper.KeeperException;
@@ -17,14 +18,25 @@ import org.apache.zookeeper.ZooKeeper;
 import org.apache.zookeeper.data.Stat;
 
 public class ZookeeperService implements Watcher {
-	int size;
+
+	int n;
 	int processId;
+	byte[] vote = new byte[1];
+	byte[] v = new byte[1];
+	Process process;
 	static ZooKeeper zk = null;
 	static Integer mutex;
+	static Integer transactionMutex;
+	boolean receivedTransaction;
 	String root;
-	List<Message> messages = new ArrayList<>();
 
-	// Set<Integer> suspected = new HashSet<>();
+	int round = 0;
+	Map<Integer, Map<Integer, byte[]>> messages = new HashMap<>();
+	Set<Integer> rec = new HashSet<Integer>();
+	private int yes;
+	private boolean noVote;
+	private PrintWriter out;
+
 	/*
 	 * TODO:
 	 * 
@@ -40,57 +52,50 @@ public class ZookeeperService implements Watcher {
 	 */
 	synchronized public void process(WatchedEvent event) {
 		synchronized (mutex) {
-			System.out.println("Event path: " + event.getPath() + " Event name: " + event.getType().toString());
+			try {
+				String path = event.getPath();
+				System.out.println("Path:" + path + " type: " + event.getType());
+				if (event.getType().toString().equals("NodeDataChanged") && path.equals("/root")) {
+					System.out.println("received transaction");
+					receivedTransaction = true;
+					mutex.notify();
+				} else if (event.getType().toString().equals("NodeDataChanged") && path.startsWith("/root/")) {
+					Stat stat = new Stat();
+					byte[] data = zk.getData(path, this, stat);
+					int round = stat.getVersion() - 1;
 
-			if (event.getType().toString().equals("NodeChildrenChanged")){
-			// int id =
-			// Integer.valueOf(event.getPath().substring("/zk_barrier/".length()));
-			// Stat state = null;
-			// byte[] data = null;
-			// try {
-			// data = zk.getData(event.getPath(), true, state);
-			// } catch (KeeperException e) {
-			// // TODO Auto-generated catch block
-			// e.printStackTrace();
-			// } catch (InterruptedException e) {
-			// // TODO Auto-generated catch block
-			// e.printStackTrace();
-			// }
-			// @SuppressWarnings("null")//??
-			// int version = state.getVersion() +1;
-			// System.out.println(
-			// "received message in Round: " + version + "from process: " + id +
-			// "with data :" + data);
-			// Message message = new Message(data, version);
-			// messages.add(message);
-			// mutex.notify();
-			//
-			// }else
-			if (event.getType().toString().equals("NodeDataChanged")
-					&& event.getPath().toString().equals("/zk_barrier")) {
-				System.out.println("received transaction");
-				try {
-					zk.getChildren("/zk_barrier", this);
-				} catch (KeeperException | InterruptedException e) {
-					// TODO Auto-generated catch block
-					e.printStackTrace();
-				}
-				mutex.notify();
-			} else {
+					if (stat.getDataLength() > 1 && !process.getDecide()) {
+						decide(data);
+						return;
+					}
+					int id = Integer.valueOf(path.substring("/root/".length()));
+					System.out.println("received data: " + data[0] + " from: " + id + " version: " + round);
 
-				System.out.println("Process: " + event.getType());
-				mutex.notify();
+					if (round == 0)
+						if (data[0] == 0) {
+							noVote = true;
+							mutex.notify();
+							return;
+						} else
+							yes++;
+
+					if (messages.containsKey(round))
+						messages.get(round).put(id, data);
+					else {
+						HashMap<Integer, byte[]> temp = new HashMap<>();
+						temp.put(id, data);
+						messages.put(round, temp);
+					}
+					mutex.notify();
+				} else
+					mutex.notify();
+
+			} catch (KeeperException e) {
+				e.getMessage();
+			} catch (InterruptedException e) {
+				e.getMessage();
 			}
-
-			// //add to suspected when node gets deleted
-			// if(event.getType().toString().equals("NodeDeleted")){
-			// int id
-			// =Integer.valueOf(event.getPath().substring("/zk_barrier/".length()));
-			// System.out.println("deleted "+ id);
-			// suspected.add(id);
-			// }
-
-			}}
+		}
 	}
 
 	/**
@@ -98,12 +103,17 @@ public class ZookeeperService implements Watcher {
 	 *
 	 * @param address
 	 * @param root
+	 * @param out
+	 * @param out
 	 * @param size
 	 */
-	public ZookeeperService(String root, int size, Integer processId) {
+	public ZookeeperService(String root, Process process, PrintWriter out) {
 		this.root = root;
-		this.size = size;
-		this.processId = processId;
+		this.n = process.getN();
+		this.process = process;
+		this.processId = process.getProcessId();
+		this.vote = process.getVote();
+		this.out = out;
 
 		if (zk == null) {
 			try {
@@ -116,7 +126,7 @@ public class ZookeeperService implements Watcher {
 				zk = null;
 			}
 		}
-		// else mutex = new Integer(-1);
+
 
 		// Create barrier node
 		if (zk != null) {
@@ -136,21 +146,21 @@ public class ZookeeperService implements Watcher {
 
 	/**
 	 * Join barrier
-	 *
-	 * @return
-	 * @throws KeeperException
-	 * @throws InterruptedException
 	 */
 	public boolean enter() throws KeeperException, InterruptedException {
-		zk.create(root + "/" + processId, new byte[0], Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL);
+		zk.create(root + "/" + processId, null, Ids.OPEN_ACL_UNSAFE, CreateMode.EPHEMERAL);
 		while (true) {
 			synchronized (mutex) {
 				List<String> list = zk.getChildren(root, true);
-				if (list.size() < size) {
+				if (list.size() < n) {
 					mutex.wait();
 				} else {
+					for (String s : list)
+						zk.exists(root + "/" + s, this);
 					zk.register(this);
+					System.out.println("Entered barrier: " + n);
 					return true;
+
 				}
 			}
 		}
@@ -158,10 +168,6 @@ public class ZookeeperService implements Watcher {
 
 	/**
 	 * Wait until all reach barrier
-	 *
-	 * @return
-	 * @throws KeeperException
-	 * @throws InterruptedException
 	 */
 	public boolean leave() throws KeeperException, InterruptedException {
 		zk.delete(root + "/" + processId, 0);
@@ -177,131 +183,118 @@ public class ZookeeperService implements Watcher {
 		}
 	}
 
-	// public Integer findLowestId() throws KeeperException,
-	// InterruptedException{
-	// List<String> list = zk.getChildren(root, true);
-	// int lowestId = Integer.valueOf(Collections.min(list));
-	// System.out.println(lowestId);
-	// return lowestId;
-	// }
-
-	public boolean sendTransaction() throws KeeperException, InterruptedException {
-		while (true) {
-			synchronized (mutex) { // not really neeeded
-				List<String> list = zk.getChildren(root, true);
-				zk.register(this);
-				int lowestId = Integer.valueOf(Collections.min(list));
-				if (processId == lowestId) {
-					// zk.delete(root + "/" + processId, 0);
-					zk.setData(root, "1".getBytes(), -1); // does version start
-															// at 0?
-					zk.register(this);
-					System.out.println(processId + " sends Transaction");
-					mutex.wait();
-					return true;
-				}
+	public boolean transaction() throws KeeperException, InterruptedException {
+		synchronized (mutex) {
+			List<String> list = zk.getChildren(root, this);
+			int lowestId = Integer.valueOf(Collections.min(list));
+			if (processId == lowestId) {
+				zk.setData(root, new byte[0], -1);
+				System.out.println(processId + " sends Transaction");
+			}
+			while (!receivedTransaction)
 				mutex.wait();
-				return false;
-			}
+			zk.setData(root + "/" + processId, vote, 0);
+			return true;
 		}
 	}
 
-	public boolean sendEstimate() { // version number == round number
-		return false;
-	}
-
-	// public boolean isSuspected(int processId){
-	// return suspected.contains(processId);
-	// }
-
-	public void sendMessage(int est_from_c, int version) throws KeeperException, InterruptedException {
-		zk.setData(root + "/" + processId, String.valueOf(est_from_c).getBytes(), version);
-	}
-
-	public List<Message> collectMessages() throws InterruptedException {
-		while (true) {
-			synchronized (mutex) {
-				if (messages.size() <= size / 2) {
-					mutex.wait();
-				} else {
-					return messages;
-				}
+	public boolean getVotes() throws KeeperException, InterruptedException {
+		synchronized (mutex) {
+			System.out.println("getting votes");
+			while (yes < n) {
+				if (noVote)
+					break;
+				mutex.wait();
 			}
+			if (yes == n) {
+				v[0] = 1;
+				return true;
+			}
+			v[0] = 0;
+			return true;
 		}
 
 	}
 
-	public boolean exists(String string) {
-		// TODO Auto-generated method stub
-		return false;
+	public boolean collectMessages() throws InterruptedException, KeeperException {
+		synchronized (mutex) {
+			while (messages.containsKey(round) && messages.get(round).size() <= Math.floor(n / 2)) {
+				mutex.wait();
+			}
+			return true;
+		}
 	}
 
-	public List<Message> getMessages() {
-		return messages;
-	}
-
-	public Message receiveFromC(int c) throws KeeperException, InterruptedException {
-		Stat state = zk.exists(root + "/" + processId, this); // ??
-		byte[] data = zk.getData(root + "/" + processId, this, state);
-		Message message = new Message(data, state.getVersion() + 1);
-		return message;
-	}
-
-	public int runProtocol(Process process,int n) throws InterruptedException, KeeperException {
-		int round = 0;
+	public void runProtocol() throws InterruptedException, KeeperException {
 		int c;
-		int est = 0;
-		int est_from_c;
-		int value;
-		int id = process.getProcessId();
-		int v = process.getVote(); // value
-		
-		Map<Integer, Message> est_from_other = new HashMap<>();
+		byte[] est_from_c;
+		byte[] est = v;
+		byte[] bad = new byte[2];
+		Stat stat;
 		while (!process.getDecide()) {
+			if (process.getCrashRound() == round && process.getCrashLocation() == 'A')
+				crash();
 			c = round % n + 1;
-			System.out.println("round: " + round + " coordinator: " + c);
-			est_from_c = 1;
+			est_from_c = bad;
 			round++;
-			if (c == id)
+			System.out.println("round: " + round + " coordinator: " + c + " value: " + v[0]);
+			if (c == processId)
 				est_from_c = est;
 			else {
-				zk.exists(root + "/" + c, this);
-				while (est_from_other.containsKey(c)
-						|| (est_from_other.containsKey(c) && est_from_other.get(c).getRound() != round)) {
-
-					if (est_from_other.containsKey(c) && (est_from_other.get(c).getRound() == round))
-						est_from_c = est_from_other.get(c).getValue();
-					System.out.println(est_from_other.get(c));
+				synchronized (mutex) {
+					while (!messages.containsKey(round) || !messages.get(round).containsKey(c)) {
+						stat = zk.exists(root + "/" + c, this);
+						if (stat == null) {
+							System.out.println("coordinator crash: " + c);
+							break;
+						}
+						System.out.println("trying to get est_from_c");
+						mutex.wait();
+					}
+					if (messages.containsKey(round) && messages.get(round).containsKey(c))
+						est_from_c = messages.get(round).get(c);
 				}
-
-				sendMessage(est_from_c, round - 1); // A
-													// KeeperException with
-													// error code
-													// KeeperException.NoNode
-													// will be thrown if no
-													// node with the given
-													// path exists.
-				System.out.println("send message:" + id);
-				collectMessages(); // A KeeperException with error code
-									// KeeperException.BadVersion will
-									// be thrown if the given version
-									// does not match the node's
-									// version.
-				// using different mutex wait()
-
-				// send <EST, ri, est_from_ci> to all
-				// wait until <EST, ri, est_from_c> collected from a majority of
-				// processes
-				while (est_from_other.size() < n / 2) {
-					// wait mutex
-
-				}
-				// always when waiting for other process also check for decide v
-				// sending
-
 			}
-			
+			System.out.println("est_from_c: " + est_from_c[0]);
+			System.out.println("send message:" + processId);
+			zk.setData(root + "/" + processId, est_from_c, round);
+			if (process.getCrashRound() == round && process.getCrashLocation() == 'B')
+				crash();
+			collectMessages();
+			if (process.getCrashRound() == round && process.getCrashLocation() == 'C')
+				crash();
+			boolean done = true;
+			for (Integer i : messages.get(round).keySet()) {
+				System.out.println("from other:" + messages.get(round).get(i)[0]);
+				if (messages.get(round).get(i) == bad) {
+					done = false;
+					break;
+				}
+			}
+			if (done) {
+				bad[0] = est_from_c[0];
+				decide(bad);
+				return;
+			}
+			est = v;
+			out.println(v[0]);
 		}
-		return 0;
+	}
+
+	private void crash() {
+		out.println("crashed");
+		out.close();
+		System.exit(0);
+	}
+
+	private void decide(byte[] vFinal) throws KeeperException, InterruptedException {
+		synchronized (mutex) {
+			process.setDecide(true);
+			System.out.println("decided: " + vFinal[0]);
+			out.println(vFinal[0]);
+			out.close();
+			zk.setData(root + "/" + processId, vFinal, -1);
+			System.exit(0);
+		}
 	}
 }

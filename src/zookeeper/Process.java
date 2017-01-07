@@ -2,39 +2,47 @@ package zookeeper;
 
 public class Process {
 	int processId;
-	boolean isActive;
 	boolean decide;
-	int vote;
-//	int r; //round
-//	int c; //coordinator
-//	int est; //estimation
-	int v; //value
-	int n; //#processes
-//	int est_from_c;
+	byte[] vote;
+	byte[] v; // value
+	int n; // #processes
 	int crashRound;
+
+	public int getCrashRound() {
+		return crashRound;
+	}
+
+	public void setCrashRound(int crashRound) {
+		this.crashRound = crashRound;
+	}
+
+	public char getCrashLocation() {
+		return crashLocation;
+	}
+
+	public void setCrashLocation(char crashLocation) {
+		this.crashLocation = crashLocation;
+	}
+
 	char crashLocation;
-	
+
 	public int getN() {
 		return n;
 	}
-
 
 	public void setN(int n) {
 		this.n = n;
 	}
 
-
-	public Process(int processId,  int n, int vote, int crashRound, char crashLocation) {
+	public Process(int processId, int n, byte[] vote, int crashRound, char crashLocation) {
 		this.processId = processId;
-		this.isActive = true;
 		this.vote = vote;
 		this.n = n;
-		this.crashRound=crashRound;
-		this.crashLocation=crashLocation;
-		
+		this.crashRound = crashRound;
+		this.crashLocation = crashLocation;
+
 	}
-	
-	
+
 	public boolean getDecide() {
 		return decide;
 	}
@@ -42,19 +50,6 @@ public class Process {
 	public void setDecide(boolean decide) {
 		this.decide = decide;
 	}
-
-//	public int getEst_from_c() {
-//		return est_from_c;
-//	}
-//
-//	public void setEst_from_c(int est_from_c) {
-//		this.est_from_c = est_from_c;
-//	}
-
-	public void setActive(boolean isActive) {
-		this.isActive = isActive;
-	}
-
 
 	public int getProcessId() {
 		return processId;
@@ -64,25 +59,16 @@ public class Process {
 		this.processId = processId;
 	}
 
-	public boolean getIsActive() {
-		return isActive;
-	}
-
-	public void setIsActive(boolean isActive) {
-		this.isActive = isActive;
-	}
-
-	public int getVote() {
+	public byte[] getVote() {
 		return vote;
 	}
 
-	public void setVote(int vote) {
+	public void setVote(byte[] vote) {
 		this.vote = vote;
 	}
 
-	public void print(){
-		System.out.println(processId+" "+n+" "+vote+" "+crashRound+" "+crashLocation);
+	public void print() {
+		System.out.println(n + " " + processId + " " + vote[0] + " " + crashRound + " " + crashLocation);
 	}
 
 }
-
